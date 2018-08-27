@@ -185,7 +185,7 @@ namespace BackPropagation
       hoPrevBiasesDelta.resize(numOutput);
     }
 
-    void UpdateWeights(const vector<double>& tValues, double eta, double lambda) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
+    void UpdateWeights(const vector<double>& tValues) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
     {
         vector<double> oGrads(numOutput); // output gradients for back-propagation
         vector<double> hGrads(numHidden); // hidden gradients for back-propagation
@@ -199,14 +199,14 @@ namespace BackPropagation
       for (int i = 0; i < oGrads.size(); ++i)
       {
         //double derivative = (1 - outputs[i]) * (1 + outputs[i]); // derivative of tanh
-        double derivative = (1 - outputs[i]) * outputs[i]; // derivative of sigmoid
+        const double derivative = (1 - outputs[i]) * outputs[i]; // derivative of sigmoid
         oGrads[i] = derivative * (tValues[i] - outputs[i]);
       }
 
       // 2. compute hidden gradients
       for (int i = 0; i < hGrads.size(); ++i)
       {
-        double derivative = (1 - ihOutputs[i]) * ihOutputs[i]; // (1 / 1 + exp(-x))'  -- using output value of neuron
+        const double derivative = (1 - ihOutputs[i]) * ihOutputs[i]; // (1 / 1 + exp(-x))'  -- using output value of neuron
         double sum = 0.0;
         for (int j = 0; j < numOutput; ++j) // each hidden delta is the sum of numOutput terms
           sum += oGrads[j] * hoWeights[i][j]; // each downstream gradient * outgoing weight
@@ -218,7 +218,7 @@ namespace BackPropagation
       {
         for (int j = 0; j < ihWeights[0].size(); ++j) // 0..3 (4)
         {
-          double delta = eta * (hGrads[j] * inputs[i] + lambda * ihWeights[i][j]); // compute the new delta
+          const double delta = hGrads[j] * inputs[i]; // compute the new delta
           ihPrevWeightsDelta[i][j] += delta; // update
           //ihWeights[i][j] += delta; // update
           //ihWeights[i][j] += alpha * ihPrevWeightsDelta[i][j]; // add momentum using previous delta. on first pass old value will be 0.0 but that's OK.
@@ -228,7 +228,7 @@ namespace BackPropagation
       // 3b. update input to hidden biases
       for (int i = 0; i < ihBiases.size(); ++i)
       {
-        double delta = eta * hGrads[i] * 1.0; // the 1.0 is the constant input for any bias; could leave out
+        const double delta = hGrads[i] * 1.0; // the 1.0 is the constant input for any bias; could leave out
         ihPrevBiasesDelta[i] += delta;
         //ihBiases[i] += delta;
         //ihBiases[i] += alpha * ihPrevBiasesDelta[i];
@@ -239,7 +239,7 @@ namespace BackPropagation
       {
         for (int j = 0; j < hoWeights[0].size(); ++j) // 0..1 (2)
         {
-          double delta = eta * (oGrads[j] * ihOutputs[i] + lambda * hoWeights[i][j]);  // see above: ihOutputs are inputs to next layer
+          const double delta = oGrads[j] * ihOutputs[i];  // see above: ihOutputs are inputs to next layer
           hoPrevWeightsDelta[i][j] += delta;
           //hoWeights[i][j] += delta;
           //hoWeights[i][j] += alpha * hoPrevWeightsDelta[i][j];
@@ -250,7 +250,7 @@ namespace BackPropagation
       // 4b. update hidden to output biases
       for (int i = 0; i < hoBiases.size(); ++i)
       {
-        double delta = eta * oGrads[i] * 1.0;
+        const double delta = oGrads[i] * 1.0;
         hoPrevBiasesDelta[i] += delta;
         //hoBiases[i] += delta;
         //hoBiases[i] += alpha * hoPrevBiasesDelta[i];
@@ -260,17 +260,21 @@ namespace BackPropagation
       ++numSamples;
     } // UpdateWeights
 
-    void ApplyDeltas()
+    void ApplyDeltas(double eta, double lambda)
     {
         if (numSamples <= 0)
             return;
+
+        // https://jamesmccaffrey.wordpress.com/2017/02/19/l2-regularization-and-back-propagation/
+        const double weightCoeff = 1. - eta * lambda / numSamples;
+        const double deltaCoeff = eta / numSamples;
 
         // update input to hidden weights (gradients must be computed right-to-left but weights can be updated in any order
         for (int i = 0; i < ihWeights.size(); ++i) // 0..2 (3)
         {
             for (int j = 0; j < ihWeights[0].size(); ++j) // 0..3 (4)
             {
-                ihWeights[i][j] += ihPrevWeightsDelta[i][j] / numSamples; // update
+                ihWeights[i][j] = ihWeights[i][j] * weightCoeff + ihPrevWeightsDelta[i][j] * deltaCoeff; // update
                 ihPrevWeightsDelta[i][j] = 0;
             }
         }
@@ -278,7 +282,7 @@ namespace BackPropagation
         // update input to hidden biases
         for (int i = 0; i < ihBiases.size(); ++i)
         {
-            ihBiases[i] += ihPrevBiasesDelta[i] / numSamples;
+            ihBiases[i] += ihPrevBiasesDelta[i] * deltaCoeff;
             ihPrevBiasesDelta[i] = 0;
         }
 
@@ -287,7 +291,7 @@ namespace BackPropagation
         {
             for (int j = 0; j < hoWeights[0].size(); ++j) // 0..1 (2)
             {
-                hoWeights[i][j] += hoPrevWeightsDelta[i][j] / numSamples;
+                hoWeights[i][j] = hoWeights[i][j] * weightCoeff + hoPrevWeightsDelta[i][j] * deltaCoeff;
                 hoPrevWeightsDelta[i][j] = 0;
             }
         }
@@ -295,7 +299,7 @@ namespace BackPropagation
         // update hidden to output biases
         for (int i = 0; i < hoBiases.size(); ++i)
         {
-            hoBiases[i] += hoPrevBiasesDelta[i] / numSamples;
+            hoBiases[i] += hoPrevBiasesDelta[i] * deltaCoeff;
             hoPrevBiasesDelta[i] = 0;
         }
 
@@ -482,7 +486,7 @@ int main()
         trainingSet.resize(10);
 
         const double eta = 0.9;  // learning rate - controls the maginitude of the increase in the change in weights. found by trial and error.
-        const double lambda = 0.0;
+        const double lambda = 0.01;
         //const double alpha = 0.04; // momentum - to discourage oscillation. found by trial and error.
         cout << "Setting learning rate (eta) = " << std::setprecision(2) << eta << '\n'; // << " and momentum (alpha) = " << std::setprecision(2) << alpha << '\n';
 
@@ -491,7 +495,7 @@ int main()
         //int ctr = 0;
         //vector<double> yValues = nn.ComputeOutputs(xValues); // prime the back-propagation loop
         //double error = BackPropagation::Helpers::Error(tValues, yValues);
-        for (int ctr = 0; ctr < 10000; ++ctr) // && error > 0.01)
+        for (int ctr = 0; ctr < 1000; ++ctr) // && error > 0.01)
         {
             cout << "===================================================\n";
             cout << "iteration = " << ctr << '\n';
@@ -506,14 +510,14 @@ int main()
                 tValues[data.data % 10] = 1;
                 const auto yValues = nn.ComputeOutputs(xValues);
                 error += BackPropagation::Helpers::Error(tValues, yValues);
-                nn.UpdateWeights(tValues, eta, lambda);
+                nn.UpdateWeights(tValues);
                 //cout << "Computing new outputs:\n";
             }
 
             cout << "Error = " << std::setprecision(4) << error << '\n';
             //cout << "Error = " << error << '\n';
 
-            nn.ApplyDeltas();
+            nn.ApplyDeltas(eta, lambda);
 
             //BackPropagation::Helpers::ShowVector(yValues, 4, false);
             //cout << "\nComputing new error\n";
