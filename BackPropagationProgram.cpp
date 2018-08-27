@@ -5,12 +5,66 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <fstream>
+#include <random>
+#include <iterator>
 
 using std::vector;
 using std::cout;
 
 namespace BackPropagation
 {
+
+    enum { DIM = 28 * 28 };
+
+    typedef unsigned char AttributeType;
+
+    struct ObjectInfo
+    {
+        AttributeType pos[DIM];
+        int data;
+    };
+
+    typedef std::vector<ObjectInfo> ObjectInfos;
+
+    std::istream& operator %(std::istream& s, int32_t& v)
+    {
+        s.read((char*)&v, sizeof(v));
+        std::reverse((char*)&v, (char*)(&v + 1));
+        return s;
+    }
+
+    ObjectInfos ReadDataSet(const char* imageFile, const char* labelFile)
+    {
+        std::ifstream ifsImages(imageFile, std::ifstream::in | std::ifstream::binary);
+        int32_t magic;
+        ifsImages % magic;
+        int32_t numImages;
+        ifsImages % numImages;
+        int32_t numRows, numCols;
+        ifsImages % numRows % numCols;
+
+        std::ifstream ifsLabels(labelFile, std::ifstream::in | std::ifstream::binary);
+        ifsLabels % magic;
+        int32_t numLabels;
+        ifsLabels % numLabels;
+
+        ObjectInfos infos;
+        infos.resize(numImages);
+        for (int i = 0; i < numImages; ++i)
+        {
+            ifsImages.read((char*)infos[i].pos, DIM);
+            unsigned char label;
+            ifsLabels.read((char*)&label, 1);
+            infos[i].data = label;
+        }
+
+        const bool ok = ifsImages && ifsLabels;
+        //const bool eof = ifsImages.eof() && ifsLabels.eof();
+
+        return infos;
+    }
+
 
   namespace Helpers
   {
@@ -64,6 +118,21 @@ namespace BackPropagation
         return sum;
     }
 
+    inline double SigmoidFunction(double x)
+    {
+        //if (x < -45.0) return 0.0;
+        //else if (x > 45.0) return 1.0;
+        //else return 1.0 / (1.0 + exp(-x));
+        return 1.0 / (1.0 + exp(-x));
+    }
+
+    inline double SigmoidGradient(double x)
+    {
+        const double temp = SigmoidFunction(x - 0.5);
+        return 0.25 - temp * temp;
+    }
+
+
   }; // namespace Helpers
 
   class NeuralNetwork
@@ -72,6 +141,7 @@ namespace BackPropagation
     int numInput;
     int numHidden;
     int numOutput;
+    int numSamples;
 
     vector<double> inputs;
     vector<vector<double>> ihWeights; // input-to-hidden
@@ -84,8 +154,6 @@ namespace BackPropagation
     vector<double> hoBiases;
     vector<double> outputs;
 
-    vector<double> oGrads; // output gradients for back-propagation
-    vector<double> hGrads; // hidden gradients for back-propagation
 
     vector<vector<double>> ihPrevWeightsDelta;  // for momentum with back-propagation
     vector<double> ihPrevBiasesDelta;
@@ -98,6 +166,7 @@ namespace BackPropagation
         : numInput(numInput)
         , numHidden(numHidden)
         , numOutput(numOutput)
+        , numSamples(0)
     {
 
       inputs.resize(numInput);
@@ -110,17 +179,18 @@ namespace BackPropagation
       hoBiases.resize(numOutput);
       outputs.resize(numOutput);
 
-      oGrads.resize(numOutput);
-      hGrads.resize(numHidden);
-
       ihPrevWeightsDelta = Helpers::MakeMatrix(numInput, numHidden);
       ihPrevBiasesDelta.resize(numHidden);
       hoPrevWeightsDelta = Helpers::MakeMatrix(numHidden, numOutput);
       hoPrevBiasesDelta.resize(numOutput);
     }
 
-    void UpdateWeights(const vector<double>& tValues, double eta, double alpha) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
+    void UpdateWeights(const vector<double>& tValues, double eta, double lambda) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
     {
+        vector<double> oGrads(numOutput); // output gradients for back-propagation
+        vector<double> hGrads(numHidden); // hidden gradients for back-propagation
+
+
       // assumes that SetWeights and ComputeOutputs have been called and so all the internal arrays and matrices have values (other than 0.0)
       if (tValues.size() != numOutput)
         throw std::runtime_error("target values not same Length as output in UpdateWeights");
@@ -128,7 +198,8 @@ namespace BackPropagation
       // 1. compute output gradients
       for (int i = 0; i < oGrads.size(); ++i)
       {
-        double derivative = (1 - outputs[i]) * (1 + outputs[i]); // derivative of tanh
+        //double derivative = (1 - outputs[i]) * (1 + outputs[i]); // derivative of tanh
+        double derivative = (1 - outputs[i]) * outputs[i]; // derivative of sigmoid
         oGrads[i] = derivative * (tValues[i] - outputs[i]);
       }
 
@@ -147,9 +218,10 @@ namespace BackPropagation
       {
         for (int j = 0; j < ihWeights[0].size(); ++j) // 0..3 (4)
         {
-          double delta = eta * hGrads[j] * inputs[i]; // compute the new delta
-          ihWeights[i][j] += delta; // update
-          ihWeights[i][j] += alpha * ihPrevWeightsDelta[i][j]; // add momentum using previous delta. on first pass old value will be 0.0 but that's OK.
+          double delta = eta * (hGrads[j] * inputs[i] + lambda * ihWeights[i][j]); // compute the new delta
+          ihPrevWeightsDelta[i][j] += delta; // update
+          //ihWeights[i][j] += delta; // update
+          //ihWeights[i][j] += alpha * ihPrevWeightsDelta[i][j]; // add momentum using previous delta. on first pass old value will be 0.0 but that's OK.
         }
       }
 
@@ -157,8 +229,9 @@ namespace BackPropagation
       for (int i = 0; i < ihBiases.size(); ++i)
       {
         double delta = eta * hGrads[i] * 1.0; // the 1.0 is the constant input for any bias; could leave out
-        ihBiases[i] += delta;
-        ihBiases[i] += alpha * ihPrevBiasesDelta[i];
+        ihPrevBiasesDelta[i] += delta;
+        //ihBiases[i] += delta;
+        //ihBiases[i] += alpha * ihPrevBiasesDelta[i];
       }
 
       // 4. update hidden to output weights
@@ -166,10 +239,11 @@ namespace BackPropagation
       {
         for (int j = 0; j < hoWeights[0].size(); ++j) // 0..1 (2)
         {
-          double delta = eta * oGrads[j] * ihOutputs[i];  // see above: ihOutputs are inputs to next layer
-          hoWeights[i][j] += delta;
-          hoWeights[i][j] += alpha * hoPrevWeightsDelta[i][j];
-          hoPrevWeightsDelta[i][j] = delta;
+          double delta = eta * (oGrads[j] * ihOutputs[i] + lambda * hoWeights[i][j]);  // see above: ihOutputs are inputs to next layer
+          hoPrevWeightsDelta[i][j] += delta;
+          //hoWeights[i][j] += delta;
+          //hoWeights[i][j] += alpha * hoPrevWeightsDelta[i][j];
+          //hoPrevWeightsDelta[i][j] = delta;
         }
       }
 
@@ -177,11 +251,56 @@ namespace BackPropagation
       for (int i = 0; i < hoBiases.size(); ++i)
       {
         double delta = eta * oGrads[i] * 1.0;
-        hoBiases[i] += delta;
-        hoBiases[i] += alpha * hoPrevBiasesDelta[i];
-        hoPrevBiasesDelta[i] = delta;
+        hoPrevBiasesDelta[i] += delta;
+        //hoBiases[i] += delta;
+        //hoBiases[i] += alpha * hoPrevBiasesDelta[i];
+        //hoPrevBiasesDelta[i] = delta;
       }
+
+      ++numSamples;
     } // UpdateWeights
+
+    void ApplyDeltas()
+    {
+        if (numSamples <= 0)
+            return;
+
+        // update input to hidden weights (gradients must be computed right-to-left but weights can be updated in any order
+        for (int i = 0; i < ihWeights.size(); ++i) // 0..2 (3)
+        {
+            for (int j = 0; j < ihWeights[0].size(); ++j) // 0..3 (4)
+            {
+                ihWeights[i][j] += ihPrevWeightsDelta[i][j] / numSamples; // update
+                ihPrevWeightsDelta[i][j] = 0;
+            }
+        }
+
+        // update input to hidden biases
+        for (int i = 0; i < ihBiases.size(); ++i)
+        {
+            ihBiases[i] += ihPrevBiasesDelta[i] / numSamples;
+            ihPrevBiasesDelta[i] = 0;
+        }
+
+        // update hidden to output weights
+        for (int i = 0; i < hoWeights.size(); ++i)  // 0..3 (4)
+        {
+            for (int j = 0; j < hoWeights[0].size(); ++j) // 0..1 (2)
+            {
+                hoWeights[i][j] += hoPrevWeightsDelta[i][j] / numSamples;
+                hoPrevWeightsDelta[i][j] = 0;
+            }
+        }
+
+        // update hidden to output biases
+        for (int i = 0; i < hoBiases.size(); ++i)
+        {
+            hoBiases[i] += hoPrevBiasesDelta[i] / numSamples;
+            hoPrevBiasesDelta[i] = 0;
+        }
+
+        numSamples = 0;
+    }
 
     void SetWeights(const vector<double>& weights)
     {
@@ -210,6 +329,38 @@ namespace BackPropagation
       for (int i = 0; i < numOutput; ++i)
         hoBiases[i] = weights[k++];
     }
+
+
+    void SetRandomWeights(double epsilon_init)
+    {
+        std::uniform_real_distribution<double> dis(-epsilon_init, epsilon_init);
+        std::default_random_engine re;
+        // copy weights and biases in weights[] array to i-h weights, i-h biases, h-o weights, h-o biases
+        //int numWeights = (numInput * numHidden) + (numHidden * numOutput) + numHidden + numOutput;
+        //if (weights.size() != numWeights)
+        //{
+        //    std::ostringstream s;
+        //    s << "The weights array length: " << weights.size() << " does not match the total number of weights and biases: " << numWeights;
+        //    throw std::runtime_error(s.str());
+        //}
+
+        //int k = 0; // points into weights param
+
+        for (int i = 0; i < numInput; ++i)
+            for (int j = 0; j < numHidden; ++j)
+                ihWeights[i][j] = dis(re);
+
+        for (int i = 0; i < numHidden; ++i)
+            ihBiases[i] = dis(re);
+
+        for (int i = 0; i < numHidden; ++i)
+            for (int j = 0; j < numOutput; ++j)
+                hoWeights[i][j] = dis(re);
+
+        for (int i = 0; i < numOutput; ++i)
+            hoBiases[i] = dis(re);
+    }
+
 
     vector<double> GetWeights()
     {
@@ -254,7 +405,7 @@ namespace BackPropagation
         ihSums[i] += ihBiases[i];
 
       for (int i = 0; i < numHidden; ++i)   // determine input-to-hidden output
-        ihOutputs[i] = SigmoidFunction(ihSums[i]);
+        ihOutputs[i] = Helpers::SigmoidFunction(ihSums[i]);
 
       for (int j = 0; j < numOutput; ++j)   // compute hidden-to-output weighted sums
         for (int i = 0; i < numHidden; ++i)
@@ -264,7 +415,7 @@ namespace BackPropagation
         hoSums[i] += hoBiases[i];
 
       for (int i = 0; i < numOutput; ++i)   // determine hidden-to-output result
-        outputs[i] = HyperTanFunction(hoSums[i]);
+        outputs[i] = Helpers::SigmoidFunction(hoSums[i]);
 
       return outputs;
     } // ComputeOutputs
@@ -276,19 +427,13 @@ namespace BackPropagation
       else return 0.0;
     }
 
-    static double SigmoidFunction(double x)
-    {
-      if (x < -45.0) return 0.0;
-      else if (x > 45.0) return 1.0;
-      else return 1.0 / (1.0 + exp(-x));
-    }
 
-    static double HyperTanFunction(double x)
-    {
-      if (x < -10.0) return -1.0;
-      else if (x > 10.0) return 1.0;
-      else return tanh(x);
-    }
+    //static double HyperTanFunction(double x)
+    //{
+    //  if (x < -10.0) return -1.0;
+    //  else if (x > 10.0) return 1.0;
+    //  else return tanh(x);
+    //}
   }; // class NeuralNetwork
 
 } // ns
@@ -296,67 +441,90 @@ namespace BackPropagation
 
 int main()
 {
+    using namespace BackPropagation;
+
     try
     {
         cout << "\nBegin Neural Network Back-Propagation demo\n\n";
 
-        cout << "Creating a 3-input, 4-hidden, 2-output neural network\n";
+        //cout << "Creating a 3-input, 4-hidden, 2-output neural network\n";
         cout << "Using sigmoid function for input-to-hidden activation\n";
         cout << "Using tanh function for hidden-to-output activation\n";
-        BackPropagation::NeuralNetwork nn(3, 4, 2);
+        BackPropagation::NeuralNetwork nn(DIM, 25, 10);
 
-        // arbitrary weights and biases
-        vector<double> weights {
-            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2,
-                -2.0, -6.0, -1.0, -7.0,
-                1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0,
-                -2.5, -5.0 };
+        //// arbitrary weights and biases
+        //vector<double> weights {
+        //    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2,
+        //        -2.0, -6.0, -1.0, -7.0,
+        //        1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0,
+        //        -2.5, -5.0 };
 
-        cout << "\nInitial 26 random weights and biases are:\n";
-        BackPropagation::Helpers::ShowVector(weights, 2, true);
+        //cout << "\nInitial 26 random weights and biases are:\n";
+        //BackPropagation::Helpers::ShowVector(weights, 2, true);
 
-        cout << "Loading neural network weights and biases\n";
-        nn.SetWeights(weights);
+        //cout << "Loading neural network weights and biases\n";
+        //nn.SetWeights(weights);
+        nn.SetRandomWeights(0.05);
 
-        cout << "\nSetting inputs:\n";
-        vector<double> xValues { 1.0, 2.0, 3.0 };
-        BackPropagation::Helpers::ShowVector(xValues, 2, true);
+        //cout << "\nSetting inputs:\n";
+        //vector<double> xValues { 1.0, 2.0, 3.0 };
+        //BackPropagation::Helpers::ShowVector(xValues, 2, true);
 
-        vector<double> initialOutputs = nn.ComputeOutputs(xValues);
-        cout << "Initial outputs:\n";
-        BackPropagation::Helpers::ShowVector(initialOutputs, 4, true);
+        //vector<double> initialOutputs = nn.ComputeOutputs(xValues);
+        //cout << "Initial outputs:\n";
+        //BackPropagation::Helpers::ShowVector(initialOutputs, 4, true);
 
-        vector<double> tValues { -0.8500, 0.7500 }; // target (desired) values. note these only make sense for tanh output activation
-        cout << "Target outputs to learn are:\n";
-        BackPropagation::Helpers::ShowVector(tValues, 4, true);
+        //vector<double> tValues { -0.8500, 0.7500 }; // target (desired) values. note these only make sense for tanh output activation
+        //cout << "Target outputs to learn are:\n";
+        //BackPropagation::Helpers::ShowVector(tValues, 4, true);
 
-        double eta = 0.90;  // learning rate - controls the maginitude of the increase in the change in weights. found by trial and error.
-        double alpha = 0.04; // momentum - to discourage oscillation. found by trial and error.
-        cout << "Setting learning rate (eta) = " << std::setprecision(2) << eta << " and momentum (alpha) = " << std::setprecision(2) << alpha << '\n';
+        auto trainingSet = ReadDataSet("train-images.idx3-ubyte", "train-labels.idx1-ubyte");
+        trainingSet.resize(10);
+
+        const double eta = 0.9;  // learning rate - controls the maginitude of the increase in the change in weights. found by trial and error.
+        const double lambda = 0.0;
+        //const double alpha = 0.04; // momentum - to discourage oscillation. found by trial and error.
+        cout << "Setting learning rate (eta) = " << std::setprecision(2) << eta << '\n'; // << " and momentum (alpha) = " << std::setprecision(2) << alpha << '\n';
 
         cout << "\nEntering main back-propagation compute-update cycle\n";
         cout << "Stopping when sum absolute error <= 0.01 or 1,000 iterations\n\n";
-        int ctr = 0;
-        vector<double> yValues = nn.ComputeOutputs(xValues); // prime the back-propagation loop
-        double error = BackPropagation::Helpers::Error(tValues, yValues);
-        while (ctr < 1000 && error > 0.01)
+        //int ctr = 0;
+        //vector<double> yValues = nn.ComputeOutputs(xValues); // prime the back-propagation loop
+        //double error = BackPropagation::Helpers::Error(tValues, yValues);
+        for (int ctr = 0; ctr < 10000; ++ctr) // && error > 0.01)
         {
             cout << "===================================================\n";
             cout << "iteration = " << ctr << '\n';
             cout << "Updating weights and biases using back-propagation\n";
-            nn.UpdateWeights(tValues, eta, alpha);
-            cout << "Computing new outputs:\n";
-            yValues = nn.ComputeOutputs(xValues);
-            BackPropagation::Helpers::ShowVector(yValues, 4, false);
-            cout << "\nComputing new error\n";
-            error = BackPropagation::Helpers::Error(tValues, yValues);
+            double error = 0;
+            for (const auto& data : trainingSet)
+            {
+                vector<double> xValues(std::begin(data.pos), std::end(data.pos));
+                for (auto& v : xValues)
+                    v /= 255.;
+                vector<double> tValues(10);
+                tValues[data.data % 10] = 1;
+                const auto yValues = nn.ComputeOutputs(xValues);
+                error += BackPropagation::Helpers::Error(tValues, yValues);
+                nn.UpdateWeights(tValues, eta, lambda);
+                //cout << "Computing new outputs:\n";
+            }
+
             cout << "Error = " << std::setprecision(4) << error << '\n';
-            ++ctr;
+            //cout << "Error = " << error << '\n';
+
+            nn.ApplyDeltas();
+
+            //BackPropagation::Helpers::ShowVector(yValues, 4, false);
+            //cout << "\nComputing new error\n";
+            //error = BackPropagation::Helpers::Error(tValues, yValues);
+            //cout << "Error = " << std::setprecision(4) << error << '\n';
+            //++ctr;
         }
-        cout << "===================================================\n";
-        cout << "\nBest weights and biases found:\n";
-        vector<double> bestWeights = nn.GetWeights();
-        BackPropagation::Helpers::ShowVector(bestWeights, 2, true);
+        //cout << "===================================================\n";
+        //cout << "\nBest weights and biases found:\n";
+        //vector<double> bestWeights = nn.GetWeights();
+        //BackPropagation::Helpers::ShowVector(bestWeights, 2, true);
 
         cout << "End Neural Network Back-Propagation demo\n\n";
         //Console.ReadLine();
