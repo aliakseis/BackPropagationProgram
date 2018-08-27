@@ -145,12 +145,10 @@ namespace BackPropagation
 
     vector<double> inputs;
     vector<vector<double>> ihWeights; // input-to-hidden
-    vector<double> ihSums;
     vector<double> ihBiases;
     vector<double> ihOutputs;
 
     vector<vector<double>> hoWeights;  // hidden-to-output
-    vector<double> hoSums;
     vector<double> hoBiases;
     vector<double> outputs;
 
@@ -171,11 +169,9 @@ namespace BackPropagation
 
       inputs.resize(numInput);
       ihWeights = Helpers::MakeMatrix(numInput, numHidden);
-      ihSums.resize(numHidden);
       ihBiases.resize(numHidden);
       ihOutputs.resize(numHidden);
       hoWeights = Helpers::MakeMatrix(numHidden, numOutput);
-      hoSums.resize(numOutput);
       hoBiases.resize(numOutput);
       outputs.resize(numOutput);
 
@@ -393,10 +389,8 @@ namespace BackPropagation
           throw std::runtime_error(s.str());
       }
 
-      for (int i = 0; i < numHidden; ++i)
-        ihSums[i] = 0.0;
-      for (int i = 0; i < numOutput; ++i)
-        hoSums[i] = 0.0;
+      vector<double> ihSums(numHidden);
+      vector<double> hoSums(numOutput);
 
       for (int i = 0; i < xValues.size(); ++i) // copy x-values to inputs
         inputs[i] = xValues[i];
