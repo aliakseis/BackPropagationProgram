@@ -8,6 +8,7 @@
 #include <fstream>
 #include <random>
 #include <iterator>
+#include <tuple>
 
 using std::vector;
 using std::cout;
@@ -143,14 +144,14 @@ namespace BackPropagation
     int numOutput;
     int numSamples;
 
-    vector<double> inputs;
+    //vector<double> inputs;
     vector<vector<double>> ihWeights; // input-to-hidden
     vector<double> ihBiases;
-    vector<double> ihOutputs;
+    //vector<double> ihOutputs;
 
     vector<vector<double>> hoWeights;  // hidden-to-output
     vector<double> hoBiases;
-    vector<double> outputs;
+    //vector<double> outputs;
 
 
     vector<vector<double>> ihPrevWeightsDelta;  // for momentum with back-propagation
@@ -167,13 +168,13 @@ namespace BackPropagation
         , numSamples(0)
     {
 
-      inputs.resize(numInput);
+      //inputs.resize(numInput);
       ihWeights = Helpers::MakeMatrix(numInput, numHidden);
       ihBiases.resize(numHidden);
-      ihOutputs.resize(numHidden);
+      //ihOutputs.resize(numHidden);
       hoWeights = Helpers::MakeMatrix(numHidden, numOutput);
       hoBiases.resize(numOutput);
-      outputs.resize(numOutput);
+      //outputs.resize(numOutput);
 
       ihPrevWeightsDelta = Helpers::MakeMatrix(numInput, numHidden);
       ihPrevBiasesDelta.resize(numHidden);
@@ -181,7 +182,11 @@ namespace BackPropagation
       hoPrevBiasesDelta.resize(numOutput);
     }
 
-    void UpdateWeights(const vector<double>& tValues) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
+    void UpdateWeights(
+        const vector<double>& inputs, 
+        const vector<double>& ihOutputs,
+        const vector<double>& outputs,
+        const vector<double>& tValues) // update the weights and biases using back-propagation, with target values, eta (learning rate), alpha (momentum)
     {
         vector<double> oGrads(numOutput); // output gradients for back-propagation
         vector<double> hGrads(numHidden); // hidden gradients for back-propagation
@@ -380,9 +385,9 @@ namespace BackPropagation
       return result;
     }
 
-    vector<double> ComputeOutputs(const vector<double>& xValues)
+    auto ComputeOutputs(const vector<double>& inputs)
     {
-      if (xValues.size() != numInput)
+      if (inputs.size() != numInput)
       {
           std::ostringstream s;
           s << "Inputs array length " << inputs.size() << " does not match NN numInput value " << numInput;
@@ -392,8 +397,13 @@ namespace BackPropagation
       vector<double> ihSums(numHidden);
       vector<double> hoSums(numOutput);
 
-      for (int i = 0; i < xValues.size(); ++i) // copy x-values to inputs
-        inputs[i] = xValues[i];
+      std::tuple<vector<double>, vector<double>> result;
+      auto& [ihOutputs, outputs] = result;
+      ihOutputs.resize(numHidden);
+      outputs.resize(numOutput);
+
+      //for (int i = 0; i < xValues.size(); ++i) // copy x-values to inputs
+      //  inputs[i] = xValues[i];
       
       for (int j = 0; j < numHidden; ++j)  // compute input-to-hidden weighted sums
         for (int i = 0; i < numInput; ++i)
@@ -415,7 +425,7 @@ namespace BackPropagation
       for (int i = 0; i < numOutput; ++i)   // determine hidden-to-output result
         outputs[i] = Helpers::SigmoidFunction(hoSums[i]);
 
-      return outputs;
+      return result;
     } // ComputeOutputs
 
     private:
@@ -502,9 +512,9 @@ int main()
                     v /= 255.;
                 vector<double> tValues(10);
                 tValues[data.data % 10] = 1;
-                const auto yValues = nn.ComputeOutputs(xValues);
+                const auto [ihOutputs, yValues] = nn.ComputeOutputs(xValues);
                 error += BackPropagation::Helpers::Error(tValues, yValues);
-                nn.UpdateWeights(tValues);
+                nn.UpdateWeights(xValues, ihOutputs, yValues, tValues);
                 //cout << "Computing new outputs:\n";
             }
 
