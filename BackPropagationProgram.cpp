@@ -356,7 +356,7 @@ int main()
         nn.SetRandomWeights(0.05);
 
         auto trainingSet = ReadDataSet("train-images.idx3-ubyte", "train-labels.idx1-ubyte");
-        trainingSet.resize(1000);
+        //trainingSet.resize(1000);
 
         const double eta = 0.9;  // learning rate - controls the maginitude of the increase in the change in weights. found by trial and error.
         const double lambda = 0.01;
@@ -371,7 +371,7 @@ int main()
         //int ctr = 0;
         //vector<double> yValues = nn.ComputeOutputs(xValues); // prime the back-propagation loop
         //double error = BackPropagation::Helpers::Error(tValues, yValues);
-        for (int ctr = 0; ctr < 1000; ++ctr) // && error > 0.01)
+        for (int ctr = 1; ctr <= 1000; ++ctr) // && error > 0.01)
         {
             //cout << "===================================================\n";
             //cout << "iteration = " << ctr << '\n';
@@ -410,6 +410,25 @@ int main()
             (double)(clock() - start) / CLOCKS_PER_SEC <<
             " seconds" << std::endl;
 
+        auto testSet = ReadDataSet("t10k-images.idx3-ubyte", "t10k-labels.idx1-ubyte");
+
+        int numMismatches = 0;
+
+        std::for_each(testSet.begin(), testSet.end(),
+            [&nn, &numMismatches](const auto& data)
+        {
+            vector<double> xValues(std::begin(data.pos), std::end(data.pos));
+            for (auto& v : xValues)
+                v /= 255.;
+            const auto[ihOutputs, yValues] = nn.ComputeOutputs(xValues);
+
+            auto predicted = std::max_element(yValues.begin(), yValues.end()) - yValues.begin();
+
+            if (predicted != data.data % 10)
+                ++numMismatches;
+        });
+
+        cout << "Test cases: " << testSet.size() << "; mismatches: " << numMismatches << '\n';
 
         cout << "End Neural Network Back-Propagation demo\n\n";
         //Console.ReadLine();
